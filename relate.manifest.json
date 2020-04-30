@@ -1,0 +1,5 @@
+{
+  "name": "ext-grand-web",
+  "type": "WEB",
+  "main": "dist/index.js"
+}
