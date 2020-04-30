@@ -16,17 +16,12 @@ Build:
 npm run build
 ```
 
-
-Start the GraphQL service:
-
-```
-npm start
-```
-
-## Seeding The Database
-
-Optionally you can seed the GraphQL service by executing mutations that will write sample data to the database:
+Install
 
 ```
-npm run seedDb
+npm prune --production
+cd ../ && cp -r grandql-extension ~/<relate-extensions-dir>/WEB
 ```
+- OS X `relate-extensions-dir`: `~/Library/Application \Support/com.Neo4j.Relate/Data/extensions`
+- Linux `relate-extensions-dir`: `~/.local/share/neo4j-relate/extensions`
+- Win32 `relate-extensions-dir`: `%APPDATA%\Local\Neo4j\Relate\Data\extensions`
