@@ -35,11 +35,11 @@ export default class GrandModule implements OnModuleInit {
         const app = httpAdapter.getInstance();
         const jsonBodyParser = bodyParser.json()
 
-        const defaultAccount = await this.systemProvider.getAccount();
-        const dbmss = await defaultAccount.listDbmss();
-        
+        const defaultEnvironment = await this.systemProvider.getEnvironment();
+        const dbmss = await defaultEnvironment.dbmss.list();
+
         // @ts-ignore
-        return Promise.all(dbmss.map(async (dbms) => {
+        return dbmss.mapEach(async (dbms) => {
             /*
              * Create a Neo4j driver instance to connect to the database
              * using credentials specified as environment variables
@@ -48,7 +48,7 @@ export default class GrandModule implements OnModuleInit {
             const boltPort = dbms.config.get('dbms.connector.bolt.advertised_address') || ':7687'
             const uri = `neo4j://127.0.0.1${boltPort}`;
             const principal = 'neo4j';
-            const credentials = await this.systemProvider.getAccessToken(defaultAccount.id, dbms.id, principal);
+            const credentials = await this.systemProvider.getAccessToken(defaultEnvironment.id, dbms.id, principal);
             const driver = neo4j.driver(
                 uri,
                 neo4j.auth.basic(
@@ -56,7 +56,7 @@ export default class GrandModule implements OnModuleInit {
                     credentials,
                 ),
             );
-                
+
             // When service launches use GraphQL schema inferred from database
             const initialSchema = await inferSchema(driver,{})
 
@@ -64,7 +64,7 @@ export default class GrandModule implements OnModuleInit {
             // FIXME: Fix this in neo4j-graphql-js
             const initialTypedefs = initialSchema.typeDefs.includes("type") ? initialSchema.typeDefs : "type Person {name: String}"
             const schema = makeAugmentedSchema({typeDefs: initialTypedefs})
-            
+
             /*
              * Create a new ApolloServer instance, serving the GraphQL schema
              * created using makeAugmentedSchema above and injecting the Neo4j driver
@@ -81,17 +81,17 @@ export default class GrandModule implements OnModuleInit {
             // Mount GraphQL endpoint at `/grandql/{dbms.name}`
             server.applyMiddleware({app, path: `/grandql/${dbms.name}`});
 
-            
+
             /* Schema management endpoint `/grandql/updateSchema/{dbms.name}
-             * POST: 
+             * POST:
              *    { schema: $typeDefs} - to set schema using $typeDefs
-             *    example: 
+             *    example:
              *     curl --location --request POST 'localhost:3000/grandql/updateSchema/foobar/' \
                      --header 'Content-Type: application/json' \
                      --data-raw '{
                       "schema": "type Person {name: String}"
                      }'
-             *        
+             *
              *     or { infer: true} - to infer schema from database
              *     example:
              *     curl --location --request POST 'localhost:3000/grandql/updateSchema/foobar/' \
@@ -99,8 +99,8 @@ export default class GrandModule implements OnModuleInit {
                      --data-raw '{
                       "infer": true
                      }'
-             * 
-             */ 
+             *
+             */
             // FIXME: does this work if there is a dbms named "updateSchema"?
             app.post(`/grandql/updateSchema/${dbms.name}/`, jsonBodyParser, async (req: any, res: any) => {
                 let hotTypeDefs: string
@@ -114,11 +114,11 @@ export default class GrandModule implements OnModuleInit {
                 console.log(hotTypeDefs)
 
                 // Generate new augmented schema using new type definitions
-                // FIXME: 
+                // FIXME:
                 // @ts-ignore
                 server.schema = makeAugmentedSchema({typeDefs: hotTypeDefs})
                 res.send("Schema updated!")
             })
-        }))
+        }).unwindPromises()
     }
 }
