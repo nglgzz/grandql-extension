@@ -1,12 +1,12 @@
 import neo4j from 'neo4j-driver';
 // @ts-ignore
-import {makeAugmentedSchema} from 'neo4j-graphql-js';
+import {makeAugmentedSchema, inferSchema} from 'neo4j-graphql-js';
 import {ApolloServer} from 'apollo-server-express';
 import {HttpAdapterHost} from '@nestjs/core';
 import {Inject, Module, OnModuleInit} from '@nestjs/common';
+// @ts-ignore
 import {SystemModule, SystemProvider} from '@relate/common';
-
-import {typeDefs} from './graphql-schema';
+import bodyParser from 'body-parser';
 
 /*
  * Create an executable GraphQL schema object from GraphQL type definitions
@@ -33,12 +33,12 @@ export default class GrandModule implements OnModuleInit {
 
         const {httpAdapter} = this.httpAdapterHost;
         const app = httpAdapter.getInstance();
-        const schema = makeAugmentedSchema({
-            typeDefs,
-        });
+        const jsonBodyParser = bodyParser.json()
+
         const defaultAccount = await this.systemProvider.getAccount();
         const dbmss = await defaultAccount.listDbmss();
-
+        
+        // @ts-ignore
         return Promise.all(dbmss.map(async (dbms) => {
             /*
              * Create a Neo4j driver instance to connect to the database
@@ -56,7 +56,15 @@ export default class GrandModule implements OnModuleInit {
                     credentials,
                 ),
             );
+                
+            // When service launches use GraphQL schema inferred from database
+            const initialSchema = await inferSchema(driver,{})
 
+            // Workaround for handling empty database, which won't generate inferred type definitions
+            // FIXME: Fix this in neo4j-graphql-js
+            const initialTypedefs = initialSchema.typeDefs.includes("type") ? initialSchema.typeDefs : "type Person {name: String}"
+            const schema = makeAugmentedSchema({typeDefs: initialTypedefs})
+            
             /*
              * Create a new ApolloServer instance, serving the GraphQL schema
              * created using makeAugmentedSchema above and injecting the Neo4j driver
@@ -65,12 +73,52 @@ export default class GrandModule implements OnModuleInit {
              */
             const server = new ApolloServer({
                 context: {driver},
-                schema: schema,
+                schema,
                 introspection: true,
                 playground: true,
             });
 
+            // Mount GraphQL endpoint at `/grandql/{dbms.name}`
             server.applyMiddleware({app, path: `/grandql/${dbms.name}`});
+
+            
+            /* Schema management endpoint `/grandql/updateSchema/{dbms.name}
+             * POST: 
+             *    { schema: $typeDefs} - to set schema using $typeDefs
+             *    example: 
+             *     curl --location --request POST 'localhost:3000/grandql/updateSchema/foobar/' \
+                     --header 'Content-Type: application/json' \
+                     --data-raw '{
+                      "schema": "type Person {name: String}"
+                     }'
+             *        
+             *     or { infer: true} - to infer schema from database
+             *     example:
+             *     curl --location --request POST 'localhost:3000/grandql/updateSchema/foobar/' \
+                     --header 'Content-Type: application/json' \
+                     --data-raw '{
+                      "infer": true
+                     }'
+             * 
+             */ 
+            // FIXME: does this work if there is a dbms named "updateSchema"?
+            app.post(`/grandql/updateSchema/${dbms.name}/`, jsonBodyParser, async (req: any, res: any) => {
+                let hotTypeDefs: string
+                if (req.body && req.body.infer) {
+                    const inferredSchema = await inferSchema(driver,{})
+                    hotTypeDefs = inferredSchema.typeDefs
+                } else {
+                    hotTypeDefs = req.body.schema
+                }
+                console.log("Updating GraphQL schema using type definitions:")
+                console.log(hotTypeDefs)
+
+                // Generate new augmented schema using new type definitions
+                // FIXME: 
+                // @ts-ignore
+                server.schema = makeAugmentedSchema({typeDefs: hotTypeDefs})
+                res.send("Schema updated!")
+            })
         }))
     }
 }
